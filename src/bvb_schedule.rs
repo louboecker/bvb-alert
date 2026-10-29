@@ -1,33 +1,42 @@
 use chrono::{NaiveDate, NaiveTime};
-use eyre::{eyre};
+use eyre::eyre;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct BvBSchedule {
-    data: BvBScheduleData,
+    pub data: BvBScheduleData,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct BvBScheduleData {
     #[serde(rename = "matchcontentfragmentmodelList")]
-    list_container: BvBScheduleDataContainer,
+    pub list_container: BvBScheduleDataContainer,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct BvBScheduleDataContainer {
     #[serde(rename = "items")]
-    matches_list: Vec<BvBScheduleMatch>,
+    pub matches_list: Vec<BvBScheduleMatch>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct BvBScheduleMatch {
     #[serde(rename = "_path")]
-    path: String,
-    url: String,
+    pub path: String,
+    pub url: String,
     #[serde(rename = "venueName")]
-    venue_name: String,
-    date: NaiveDate,
-    time: NaiveTime,
+    pub venue_name: Option<String>,
+    pub date: NaiveDate,
+    pub time: NaiveTime,
+    #[serde(rename = "homeTeam")]
+    pub home_team: BvBScheduleTeam,
+    #[serde(rename = "adversaryTeam")]
+    pub adversary_team: BvBScheduleTeam,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct BvBScheduleTeam {
+    pub team: String,
 }
 
 pub async fn pull_schedule() -> eyre::Result<BvBSchedule> {

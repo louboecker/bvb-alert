@@ -1,41 +1,73 @@
-use std::sync::LazyLock;
+use std::sync::Arc;
 
 use chrono_tz::Europe::Berlin;
-use tokio::{signal, spawn, sync::Mutex};
+use eyre::Result;
+use ntfy::dispatcher;
+use tokio::{select, signal, spawn, sync::Mutex};
 use tokio_schedule::{Job, every};
 
-use crate::bvb_schedule::{BvBSchedule, pull_schedule};
+use crate::{
+    bvb_schedule::{BvBSchedule, pull_schedule},
+    notification::send_notification,
+};
 
 mod bvb_schedule;
 mod notification;
 
-static SCHEDULE: LazyLock<Mutex<BvBSchedule>> =
-    LazyLock::new(|| Mutex::new(BvBSchedule::default()));
-
 #[tokio::main]
-async fn main() {
-    let mut join_handles = Vec::new();
+async fn main() -> Result<()> {
+    let dispatcher = Arc::new(dispatcher::builder("https://ntfy.boecker.dev").build_async()?);
 
-    let pull_schedule_job = every(1)
-        .day()
-        .at(7, 00, 00)
-        .in_timezone(&Berlin)
-        .perform(async || {
-            let new_schedule = pull_schedule().await;
+    let schedule = Arc::new(Mutex::new(BvBSchedule::default()));
 
-            if let Ok(new_schedule) = new_schedule {
-                let mut schedule = SCHEDULE.lock().await;
+    let pull_schedule_job = every(1).day().at(7, 00, 00).in_timezone(&Berlin).perform({
+        let schedule = Arc::clone(&schedule);
+        move || {
+            let schedule = Arc::clone(&schedule);
+            async move {
+                let new_schedule = pull_schedule().await;
 
-                *schedule = new_schedule;
+                if let Ok(new_schedule) = new_schedule {
+                    let mut schedule = schedule.lock().await;
+
+                    *schedule = new_schedule;
+
+                    println!("Pulled new schedule successfully");
+                } else {
+                    eprintln!("Failed to pull new schedule: {:?}", new_schedule.err());
+                }
             }
-        });
-    join_handles.push(spawn(pull_schedule_job));
-
-    if let Ok(()) = signal::ctrl_c().await {
-        for handle in join_handles {
-            handle.abort();
         }
-    } else {
-        eprintln!("Failed to listen to CTRL+C Signal")
+    });
+
+    let send_notification_job =
+        every(1)
+            .hour()
+            .at(00, 00)
+            .in_timezone(&Berlin)
+            .perform(move || {
+                let schedule = Arc::clone(&schedule);
+                let dispatcher = Arc::clone(&dispatcher);
+                async move {
+                    let schedule = schedule.lock().await;
+
+                    let result = send_notification(&dispatcher, &schedule).await;
+
+                    if let Ok(()) = result {
+                        println!("Notification sent successfully");
+                    } else {
+                        eprintln!("Failed to send notification: {:?}", result);
+                    }
+                }
+            });
+
+    println!("Starting BvB alert service...");
+
+    select! {
+        _ = spawn(pull_schedule_job) => {}
+        _ = spawn(send_notification_job) => {}
+        _ = signal::ctrl_c() => {}
     }
+
+    Ok(())
 }
